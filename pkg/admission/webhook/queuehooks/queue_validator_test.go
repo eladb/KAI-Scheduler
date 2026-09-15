@@ -216,6 +216,23 @@ var _ = Describe("Queue Validator", func() {
 				ContainSubstring("total children GPU quota (unlimited) exceeds parent queue parent-queue GPU quota (4.00)"),
 			))
 		})
+
+		It("admits an oversubscribing child (warns but does not reject)", func() {
+			// Quota validation is advisory: oversubscription is a supported use case,
+			// so an over-quota child is admitted (nil error) and only warned about.
+			parent := parentQueue(
+				v2.QueueResources{CPU: v2.QueueResource{Quota: 1000}, GPU: v2.QueueResource{Quota: 4}, Memory: v2.QueueResource{Quota: 8192}},
+				"child-1",
+			)
+			existingChild := childQueue("child-1", v2.QueueResources{CPU: v2.QueueResource{Quota: 800}, GPU: v2.QueueResource{Quota: 3}, Memory: v2.QueueResource{Quota: 6000}})
+			validator = newValidatorWithQueues(parent, existingChild)
+
+			newChild := childQueue("child-2", v2.QueueResources{CPU: v2.QueueResource{Quota: 800}, GPU: v2.QueueResource{Quota: 3}, Memory: v2.QueueResource{Quota: 6000}})
+
+			warnings, err := validator.ValidateCreate(ctx, newChild)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(warnings).NotTo(BeEmpty())
+		})
 	})
 
 	Context("ValidateUpdate children quota sum", func() {
