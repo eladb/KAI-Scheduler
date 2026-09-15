@@ -183,7 +183,22 @@ var _ = Describe("Queue Validator", func() {
 
 			warnings, err := validator.ValidateCreate(ctx, newChild)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).To(ConsistOf(ContainSubstring("total children GPU quota (-1.00) exceeds parent queue parent-queue GPU quota (4.00)")))
+			Expect(warnings).To(ConsistOf(ContainSubstring("total children GPU quota (unlimited) exceeds parent queue parent-queue GPU quota (4.00)")))
+		})
+
+		It("should not warn when fractional GPU quotas sum exactly to the parent", func() {
+			parent := parentQueue(
+				v2.QueueResources{CPU: v2.QueueResource{Quota: 1000}, GPU: v2.QueueResource{Quota: 0.3}, Memory: v2.QueueResource{Quota: 8192}},
+				"child-1",
+			)
+			existingChild := childQueue("child-1", v2.QueueResources{GPU: v2.QueueResource{Quota: 0.1}})
+			validator = newValidatorWithQueues(parent, existingChild)
+
+			newChild := childQueue("child-2", v2.QueueResources{GPU: v2.QueueResource{Quota: 0.2}})
+
+			warnings, err := validator.ValidateCreate(ctx, newChild)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(warnings).To(BeEmpty())
 		})
 
 		It("should warn when an unlimited child is created under a finite parent", func() {
@@ -197,35 +212,67 @@ var _ = Describe("Queue Validator", func() {
 			warnings, err := validator.ValidateCreate(ctx, newChild)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(warnings).To(ConsistOf(
-				ContainSubstring("child queue GPU quota (-1.00) exceeds parent queue parent-queue GPU quota (4.00)"),
-				ContainSubstring("total children GPU quota (-1.00) exceeds parent queue parent-queue GPU quota (4.00)"),
+				ContainSubstring("child queue GPU quota (unlimited) exceeds parent queue parent-queue GPU quota (4.00)"),
+				ContainSubstring("total children GPU quota (unlimited) exceeds parent queue parent-queue GPU quota (4.00)"),
 			))
 		})
 	})
 
 	Context("ValidateUpdate children quota sum", func() {
-		It("should treat unlimited quotas as unlimited when summing children", func() {
+		parentWithChildren := func(resources v2.QueueResources, children ...client.Object) *v2.Queue {
+			var names []string
+			for _, child := range children {
+				names = append(names, child.GetName())
+			}
 			parent := &v2.Queue{
 				ObjectMeta: metav1.ObjectMeta{Name: "parent-queue"},
-				Spec: v2.QueueSpec{Resources: &v2.QueueResources{
-					CPU: v2.QueueResource{Quota: -1}, GPU: v2.QueueResource{Quota: 4}, Memory: v2.QueueResource{Quota: -1},
-				}},
-				Status: v2.QueueStatus{ChildQueues: []string{"child-1", "child-2", "child-3"}},
-			}
-			children := []client.Object{
-				&v2.Queue{ObjectMeta: metav1.ObjectMeta{Name: "child-1"}, Spec: v2.QueueSpec{ParentQueue: "parent-queue",
-					Resources: &v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: -1}, Memory: v2.QueueResource{Quota: 4000}}}},
-				&v2.Queue{ObjectMeta: metav1.ObjectMeta{Name: "child-2"}, Spec: v2.QueueSpec{ParentQueue: "parent-queue",
-					Resources: &v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: 2}, Memory: v2.QueueResource{Quota: 4000}}}},
-				&v2.Queue{ObjectMeta: metav1.ObjectMeta{Name: "child-3"}, Spec: v2.QueueSpec{ParentQueue: "parent-queue",
-					Resources: &v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: 1}, Memory: v2.QueueResource{Quota: 4000}}}},
+				Spec:       v2.QueueSpec{Resources: &resources},
+				Status:     v2.QueueStatus{ChildQueues: names},
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(children, parent)...).Build()
 			validator = &queueValidator{kubeClient: c, enableQuotaValidation: true}
+			return parent
+		}
+
+		child := func(name string, resources v2.QueueResources) *v2.Queue {
+			return &v2.Queue{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec:       v2.QueueSpec{ParentQueue: "parent-queue", Resources: &resources},
+			}
+		}
+
+		It("should treat unlimited quotas as unlimited when summing children", func() {
+			parent := parentWithChildren(
+				v2.QueueResources{CPU: v2.QueueResource{Quota: -1}, GPU: v2.QueueResource{Quota: 4}, Memory: v2.QueueResource{Quota: -1}},
+				child("child-1", v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: -1}, Memory: v2.QueueResource{Quota: 4000}}),
+				child("child-2", v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: 2}, Memory: v2.QueueResource{Quota: 4000}}),
+				child("child-3", v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: 1}, Memory: v2.QueueResource{Quota: 4000}}),
+			)
 
 			warnings, err := validator.ValidateUpdate(ctx, parent, parent)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).To(ConsistOf(ContainSubstring("total children GPU quota (-1.00) exceeds parent GPU quota (4.00)")))
+			Expect(warnings).To(ConsistOf(
+				ContainSubstring("child queue child-1 GPU quota (unlimited) exceeds parent GPU quota (4.00)"),
+				ContainSubstring("total children GPU quota (unlimited) exceeds parent GPU quota (4.00)"),
+			))
+		})
+
+		It("should warn per child for GPU and Memory like it does for CPU", func() {
+			parent := parentWithChildren(
+				v2.QueueResources{CPU: v2.QueueResource{Quota: 1000}, GPU: v2.QueueResource{Quota: 4}, Memory: v2.QueueResource{Quota: 8192}},
+				child("child-1", v2.QueueResources{CPU: v2.QueueResource{Quota: 2000}, GPU: v2.QueueResource{Quota: 5}, Memory: v2.QueueResource{Quota: 9000}}),
+			)
+
+			warnings, err := validator.ValidateUpdate(ctx, parent, parent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(warnings).To(ConsistOf(
+				ContainSubstring("child queue child-1 CPU quota (2000) exceeds parent CPU quota (1000)"),
+				ContainSubstring("child queue child-1 GPU quota (5.00) exceeds parent GPU quota (4.00)"),
+				ContainSubstring("child queue child-1 Memory quota (9000) exceeds parent Memory quota (8192)"),
+				ContainSubstring("total children CPU quota (2000) exceeds parent CPU quota (1000)"),
+				ContainSubstring("total children GPU quota (5.00) exceeds parent GPU quota (4.00)"),
+				ContainSubstring("total children Memory quota (9000) exceeds parent Memory quota (8192)"),
+			))
 		})
 	})
 
