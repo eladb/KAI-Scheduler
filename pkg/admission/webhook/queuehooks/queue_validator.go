@@ -107,13 +107,29 @@ func (v *queueValidator) validateParentChildQuota(ctx context.Context, childQueu
 
 	childCPU := childQueue.Spec.Resources.CPU.Quota
 	parentCPU := parentQueue.Spec.Resources.CPU.Quota
+	childGPU := childQueue.Spec.Resources.GPU.Quota
+	parentGPU := parentQueue.Spec.Resources.GPU.Quota
+	childMemory := childQueue.Spec.Resources.Memory.Quota
+	parentMemory := parentQueue.Spec.Resources.Memory.Quota
 
 	if childCPU > parentCPU {
 		warnings = append(warnings, fmt.Sprintf("child queue CPU quota (%.0f) exceeds parent queue %s CPU quota (%.0f)",
 			childCPU, parentQueue.Name, parentCPU))
 	}
 
+	if childGPU > parentGPU {
+		warnings = append(warnings, fmt.Sprintf("child queue GPU quota (%.2f) exceeds parent queue %s GPU quota (%.2f)",
+			childGPU, parentQueue.Name, parentGPU))
+	}
+
+	if childMemory > parentMemory {
+		warnings = append(warnings, fmt.Sprintf("child queue Memory quota (%.0f) exceeds parent queue %s Memory quota (%.0f)",
+			childMemory, parentQueue.Name, parentMemory))
+	}
+
 	totalChildrenCPU := childCPU
+	totalChildrenGPU := childGPU
+	totalChildrenMemory := childMemory
 	for _, childName := range parentQueue.Status.ChildQueues {
 		if childName == childQueue.Name {
 			continue
@@ -127,6 +143,8 @@ func (v *queueValidator) validateParentChildQuota(ctx context.Context, childQueu
 
 		if existingChild.Spec.Resources != nil {
 			totalChildrenCPU += existingChild.Spec.Resources.CPU.Quota
+			totalChildrenGPU += existingChild.Spec.Resources.GPU.Quota
+			totalChildrenMemory += existingChild.Spec.Resources.Memory.Quota
 		}
 	}
 
@@ -135,14 +153,14 @@ func (v *queueValidator) validateParentChildQuota(ctx context.Context, childQueu
 			totalChildrenCPU, parentQueue.Name, parentCPU))
 	}
 
-	if childQueue.Spec.Resources.GPU.Quota > parentQueue.Spec.Resources.GPU.Quota {
-		warnings = append(warnings, fmt.Sprintf("child queue GPU quota (%.2f) exceeds parent queue %s GPU quota (%.2f)",
-			childQueue.Spec.Resources.GPU.Quota, parentQueue.Name, parentQueue.Spec.Resources.GPU.Quota))
+	if totalChildrenGPU > parentGPU {
+		warnings = append(warnings, fmt.Sprintf("total children GPU quota (%.2f) exceeds parent queue %s GPU quota (%.2f)",
+			totalChildrenGPU, parentQueue.Name, parentGPU))
 	}
 
-	if childQueue.Spec.Resources.Memory.Quota > parentQueue.Spec.Resources.Memory.Quota {
-		warnings = append(warnings, fmt.Sprintf("child queue Memory quota (%.0f) exceeds parent queue %s Memory quota (%.0f)",
-			childQueue.Spec.Resources.Memory.Quota, parentQueue.Name, parentQueue.Spec.Resources.Memory.Quota))
+	if totalChildrenMemory > parentMemory {
+		warnings = append(warnings, fmt.Sprintf("total children Memory quota (%.0f) exceeds parent queue %s Memory quota (%.0f)",
+			totalChildrenMemory, parentQueue.Name, parentMemory))
 	}
 
 	return warnings, nil

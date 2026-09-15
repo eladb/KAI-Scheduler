@@ -1,0 +1,3 @@
+kind: Fixed
+body: |-
+  Queue create validation now checks sibling GPU and memory quota sums against the parent, matching update
