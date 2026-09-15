@@ -12,14 +12,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	v2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2"
+	"github.com/kai-scheduler/KAI-scheduler/pkg/common/constants"
 )
 
 var queueValidatorLog = logf.Log.WithName("queue-validator")
 
-const (
-	missingResourcesError = "resources must be specified"
-	unlimitedQuota        = float64(-1)
-)
+const missingResourcesError = "resources must be specified"
 
 type QueueValidator interface {
 	ValidateCreate(ctx context.Context, obj *v2.Queue) (warnings admission.Warnings, err error)
@@ -220,18 +218,22 @@ func (v *queueValidator) validateChildrenQuotaSum(ctx context.Context, parentQue
 	return warnings, nil
 }
 
-// quotaExceeds treats -1 on either side as unlimited, so no comparison applies.
+// quotaExceeds treats -1 as unlimited: nothing exceeds an unlimited parent,
+// and an unlimited quota always exceeds a finite parent.
 func quotaExceeds(quota, parentQuota float64) bool {
-	if quota == unlimitedQuota || parentQuota == unlimitedQuota {
+	if parentQuota == constants.UnlimitedResourceQuantity {
 		return false
+	}
+	if quota == constants.UnlimitedResourceQuantity {
+		return true
 	}
 	return quota > parentQuota
 }
 
-// addQuota skips unlimited (-1) quotas so they do not offset siblings' totals.
+// addQuota is absorbing for -1: any unlimited term makes the total unlimited.
 func addQuota(total, quota float64) float64 {
-	if quota == unlimitedQuota {
-		return total
+	if total == constants.UnlimitedResourceQuantity || quota == constants.UnlimitedResourceQuantity {
+		return constants.UnlimitedResourceQuantity
 	}
 	return total + quota
 }

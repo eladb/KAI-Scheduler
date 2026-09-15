@@ -171,33 +171,35 @@ var _ = Describe("Queue Validator", func() {
 			Expect(warnings).To(BeEmpty())
 		})
 
-		It("should not let an unlimited sibling offset the other siblings' total", func() {
+		It("should treat an unlimited sibling as making the total unlimited", func() {
 			parent := parentQueue(
 				v2.QueueResources{CPU: v2.QueueResource{Quota: 1000}, GPU: v2.QueueResource{Quota: 4}, Memory: v2.QueueResource{Quota: 8192}},
-				"child-1", "child-2",
+				"child-1",
 			)
 			unlimitedChild := childQueue("child-1", v2.QueueResources{GPU: v2.QueueResource{Quota: -1}})
-			existingChild := childQueue("child-2", v2.QueueResources{GPU: v2.QueueResource{Quota: 2}})
-			validator = newValidatorWithQueues(parent, unlimitedChild, existingChild)
+			validator = newValidatorWithQueues(parent, unlimitedChild)
 
-			newChild := childQueue("child-3", v2.QueueResources{GPU: v2.QueueResource{Quota: 3}})
+			newChild := childQueue("child-2", v2.QueueResources{GPU: v2.QueueResource{Quota: 1}})
 
 			warnings, err := validator.ValidateCreate(ctx, newChild)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).To(ConsistOf(ContainSubstring("total children GPU quota (5.00) exceeds parent queue parent-queue GPU quota (4.00)")))
+			Expect(warnings).To(ConsistOf(ContainSubstring("total children GPU quota (-1.00) exceeds parent queue parent-queue GPU quota (4.00)")))
 		})
 
-		It("should not warn when the child quota is unlimited", func() {
+		It("should warn when an unlimited child is created under a finite parent", func() {
 			parent := parentQueue(
 				v2.QueueResources{CPU: v2.QueueResource{Quota: 1000}, GPU: v2.QueueResource{Quota: 4}, Memory: v2.QueueResource{Quota: 8192}},
 			)
 			validator = newValidatorWithQueues(parent)
 
-			newChild := childQueue("child-1", v2.QueueResources{CPU: v2.QueueResource{Quota: -1}, GPU: v2.QueueResource{Quota: -1}, Memory: v2.QueueResource{Quota: -1}})
+			newChild := childQueue("child-1", v2.QueueResources{CPU: v2.QueueResource{Quota: 100}, GPU: v2.QueueResource{Quota: -1}, Memory: v2.QueueResource{Quota: 100}})
 
 			warnings, err := validator.ValidateCreate(ctx, newChild)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).To(BeEmpty())
+			Expect(warnings).To(ConsistOf(
+				ContainSubstring("child queue GPU quota (-1.00) exceeds parent queue parent-queue GPU quota (4.00)"),
+				ContainSubstring("total children GPU quota (-1.00) exceeds parent queue parent-queue GPU quota (4.00)"),
+			))
 		})
 	})
 
@@ -216,14 +218,14 @@ var _ = Describe("Queue Validator", func() {
 				&v2.Queue{ObjectMeta: metav1.ObjectMeta{Name: "child-2"}, Spec: v2.QueueSpec{ParentQueue: "parent-queue",
 					Resources: &v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: 2}, Memory: v2.QueueResource{Quota: 4000}}}},
 				&v2.Queue{ObjectMeta: metav1.ObjectMeta{Name: "child-3"}, Spec: v2.QueueSpec{ParentQueue: "parent-queue",
-					Resources: &v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: 3}, Memory: v2.QueueResource{Quota: 4000}}}},
+					Resources: &v2.QueueResources{CPU: v2.QueueResource{Quota: 500}, GPU: v2.QueueResource{Quota: 1}, Memory: v2.QueueResource{Quota: 4000}}}},
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(append(children, parent)...).Build()
 			validator = &queueValidator{kubeClient: c, enableQuotaValidation: true}
 
 			warnings, err := validator.ValidateUpdate(ctx, parent, parent)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).To(ConsistOf(ContainSubstring("total children GPU quota (5.00) exceeds parent GPU quota (4.00)")))
+			Expect(warnings).To(ConsistOf(ContainSubstring("total children GPU quota (-1.00) exceeds parent GPU quota (4.00)")))
 		})
 	})
 
