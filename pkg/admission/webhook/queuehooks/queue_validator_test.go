@@ -231,7 +231,11 @@ var _ = Describe("Queue Validator", func() {
 
 			warnings, err := validator.ValidateCreate(ctx, newChild)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(warnings).NotTo(BeEmpty())
+			Expect(warnings).To(ConsistOf(
+				ContainSubstring("total children CPU quota (1600) exceeds parent queue parent-queue CPU quota (1000)"),
+				ContainSubstring("total children GPU quota (6.00) exceeds parent queue parent-queue GPU quota (4.00)"),
+				ContainSubstring("total children Memory quota (12000) exceeds parent queue parent-queue Memory quota (8192)"),
+			))
 		})
 	})
 
