@@ -333,6 +333,52 @@ var _ = Describe("BuildResourceVectorMap", func() {
 		Expect(indexMap.GetIndex("gpu-memory")).To(Equal(-1))
 		Expect(indexMap.Len()).To(Equal(4))
 	})
+
+	It("should NOT normalize non-GPU resources ending in 'gpu' (e.g. nvidia.com/vgpu) into the GPU index", func() {
+		const vgpuResource = "nvidia.com/vgpu"
+
+		nodeResources := []v1.ResourceList{
+			{
+				v1.ResourceCPU:                  *resource.NewMilliQuantity(cpuMedium, resource.DecimalSI),
+				v1.ResourceMemory:               *resource.NewQuantity(oneGiB, resource.DecimalSI),
+				v1.ResourceName(commonconstants.NvidiaGpuResource): *resource.NewQuantity(gpuTwo, resource.DecimalSI),
+				v1.ResourceName(vgpuResource):                    *resource.NewQuantity(80, resource.DecimalSI),
+			},
+		}
+
+		indexMap := BuildResourceVectorMap(nodeResources)
+
+		// nvidia.com/vgpu must NOT map to the GPU index (2), but should be added as a separate scalar resource
+		vgpuIndex := indexMap.GetIndex(vgpuResource)
+		Expect(vgpuIndex).NotTo(Equal(GPUIndex))
+		Expect(vgpuIndex).NotTo(Equal(-1))
+		// The vector map must have 5 entries: CPU, Memory, gpu, pods, and nvidia.com/vgpu as a separate scalar resource
+		Expect(indexMap.Len()).To(Equal(5))
+		Expect(indexMap.ResourceAt(2)).To(Equal(v1.ResourceName(commonconstants.GpuResource)))
+		Expect(indexMap.ResourceAt(vgpuIndex)).To(Equal(v1.ResourceName(vgpuResource)))
+	})
+
+	It("should NOT normalize amd GPU resources ending in 'gpu' into the GPU index (e.g. amd.com/vgpu)", func() {
+		const amdVgpuResource = "amd.com/vgpu"
+
+		nodeResources := []v1.ResourceList{
+			{
+				v1.ResourceCPU:                  *resource.NewMilliQuantity(cpuMedium, resource.DecimalSI),
+				v1.ResourceMemory:               *resource.NewQuantity(oneGiB, resource.DecimalSI),
+				v1.ResourceName(commonconstants.NvidiaGpuResource): *resource.NewQuantity(gpuTwo, resource.DecimalSI),
+				v1.ResourceName(amdVgpuResource):                    *resource.NewQuantity(80, resource.DecimalSI),
+			},
+		}
+
+		indexMap := BuildResourceVectorMap(nodeResources)
+
+		amdVgpuIndex := indexMap.GetIndex(amdVgpuResource)
+		Expect(amdVgpuIndex).NotTo(Equal(GPUIndex))
+		Expect(amdVgpuIndex).NotTo(Equal(-1))
+		Expect(indexMap.Len()).To(Equal(5))
+		Expect(indexMap.ResourceAt(2)).To(Equal(v1.ResourceName(commonconstants.GpuResource)))
+		Expect(indexMap.ResourceAt(amdVgpuIndex)).To(Equal(v1.ResourceName(amdVgpuResource)))
+	})
 })
 
 var _ = Describe("Resource conversion", func() {
